@@ -1,0 +1,132 @@
+---
+title: "Preliminary genotype analyes"
+output: html_notebook
+---
+
+Import data into tidy formats
+
+```{r}
+tidyData <- uwadrc::loadData()
+tidyData$genotypeAnnotations
+tidyData$genotypes
+tidyData$phenotypes
+tidyData$genotypeSummary
+tidyData$individualSummary
+```
+
+Next, let's do a simple model fitting and plot
+
+```{r}
+modelFit <- MASS::rlm(AOO ~ GRS,tidyData$individualSummary)
+intercept <- summary(modelFit)$coef[1,1]
+slope <- summary(modelFit)$coef[2,1]
+
+
+g <- ggplot2::ggplot(tidyData$individualSummary,
+                     ggplot2::aes(x = GRS,
+                                  y = AOO,
+                                  color = Diagnosis))
+g <- g + ggplot2::geom_point()
+g <- g + ggplot2::geom_abline(ggplot2::aes(intercept = intercept,
+                                           slope = slope))
+g <- g + ggplot2::labs(title = paste('p-value:',round(pt(abs(summary(modelFit)$coef[2,3]),30,lower.tail=F)*2,2),', slope: ',round(slope,2)))
+
+g
+
+#cat('p-value:',pt(abs(summary(modelFit)$coef[2,3]),30,lower.tail=F)*2)
+```
+
+Next, let's add some annotations for genes and recompute the scores.
+
+
+```{r}
+genoAnno <- readr::read_csv('igap_gene_amp_cell_annos.csv')
+tidyData$genotypeAnnotations <- dplyr::left_join(tidyData$genotypeAnnotations,genoAnno)
+dplyr::select(tidyData$genotypeAnnotations, rsID, Gene, PathwayAnnotation1,Annotation)
+```
+
+Recompute scores for endocytotic, neural, and microglial.
+
+```{r}
+endoAnno <- dplyr::filter(tidyData$genotypeAnnotations,Annotation=='endocytotic')
+neuralAnno <- dplyr::filter(tidyData$genotypeAnnotations,Annotation=='neural')
+microAnno <- dplyr::filter(tidyData$genotypeAnnotations,Annotation=='microglial')
+endoGeno <- dplyr::filter(tidyData$genotypes,rsID%in% endoAnno$rsID)
+neuralGeno <- dplyr::filter(tidyData$genotypes,rsID %in% neuralAnno$rsID)
+microGeno <- dplyr::filter(tidyData$genotypes,rsID %in% microAnno$rsID)
+endoGenoSum <- uwadrc::computeGRS(endoGeno,'endocytotic')
+neuralGenoSum <- uwadrc::computeGRS(neuralGeno,'neural')
+microGenoSum <- uwadrc::computeGRS(microGeno,'microglial')
+masterManifest <- dplyr::left_join(endoGenoSum,neuralGenoSum)
+masterManifest <- dplyr::left_join(masterManifest,microGenoSum)
+masterManifest <- dplyr::left_join(tidyData$individualSummary,masterManifest)
+```
+Plot scores 
+
+```{r}
+pairs(masterManifest[,c('GRS','GRSendocytotic','GRSneural','GRSmicroglial')])
+```
+
+Top 5 GRS cases for each sub type:
+```{r}
+masterManifest <- dplyr::arrange(masterManifest,desc(GRSendocytotic))
+cat('endocytotic:',masterManifest$StudyID[1:5],'\n')
+masterManifest <- dplyr::arrange(masterManifest,desc(GRSmicroglial))
+cat('microglial:',masterManifest$StudyID[1:5],'\n')
+masterManifest <- dplyr::arrange(masterManifest,desc(GRSneural))
+cat('neural:',masterManifest$StudyID[1:5],'\n')
+```
+
+Plot against age of onset for endocytotic
+
+```{r}
+modelFit <- MASS::rlm(AOO ~ GRSendocytotic,masterManifest)
+intercept <- summary(modelFit)$coef[1,1]
+slope <- summary(modelFit)$coef[2,1]
+
+
+g <- ggplot2::ggplot(masterManifest,
+                     ggplot2::aes(x = GRSendocytotic,
+                                  y = AOO,
+                                  color = Diagnosis))
+g <- g + ggplot2::geom_point()
+g <- g + ggplot2::geom_abline(ggplot2::aes(intercept = intercept,
+                                           slope = slope))
+g <- g + ggplot2::labs(title = paste('p-value:',round(pt(abs(summary(modelFit)$coef[2,3]),30,lower.tail=F)*2,2),', slope: ',round(slope,2)))
+
+g
+```
+```{r}
+modelFit <- MASS::rlm(AOO ~ GRSneural,masterManifest)
+intercept <- summary(modelFit)$coef[1,1]
+slope <- summary(modelFit)$coef[2,1]
+
+
+g <- ggplot2::ggplot(masterManifest,
+                     ggplot2::aes(x = GRSneural,
+                                  y = AOO,
+                                  color = Diagnosis))
+g <- g + ggplot2::geom_point()
+g <- g + ggplot2::geom_abline(ggplot2::aes(intercept = intercept,
+                                           slope = slope))
+g <- g + ggplot2::labs(title = paste('p-value:',round(pt(abs(summary(modelFit)$coef[2,3]),30,lower.tail=F)*2,2),', slope: ',round(slope,2)))
+
+g
+```
+```{r}
+modelFit <- MASS::rlm(AOO ~ GRSmicroglial,masterManifest)
+intercept <- summary(modelFit)$coef[1,1]
+slope <- summary(modelFit)$coef[2,1]
+
+
+g <- ggplot2::ggplot(masterManifest,
+                     ggplot2::aes(x = GRSmicroglial,
+                                  y = AOO,
+                                  color = Diagnosis))
+g <- g + ggplot2::geom_point()
+g <- g + ggplot2::geom_abline(ggplot2::aes(intercept = intercept,
+                                           slope = slope))
+g <- g + ggplot2::labs(title = paste('p-value:',round(pt(abs(summary(modelFit)$coef[2,3]),30,lower.tail=F)*2,2),', slope: ',round(slope,2)))
+
+g
+```
