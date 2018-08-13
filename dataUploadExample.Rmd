@@ -1,0 +1,18 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Login in to synapse
+
+```{r}
+library(synapser)
+library(synapserutils)
+synapser::synLogin()
+```
+
+Push manifest to synapse
+
+```{r}
+synapserutils::syncToSynapse('testManifest.tsv')
+```

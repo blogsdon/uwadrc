@@ -1,0 +1,529 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+```{r}
+eigengenes <- uwadrc::get_eigengenes_tissue()
+```
+
+
+```{r}
+synapseClient::synapseLogin()
+covobj <- synapseClient::synGet('syn3191087')
+cova <- data.table::fread(covobj@filePath,data.table=F)
+#cova <- cova[,-1]
+#colnames(cova)
+#cova <- dplyr::select(cova,projid,cogdx,braaksc,ceradsc,age_first_ad_dx,educ)
+```
+
+```{r}
+genos <- uwadrc::loadAMPADsnps()
+```
+
+```{r}
+mappingObj <- synapseClient::synGet('syn3382527')
+map2 <- data.table::fread(mappingObj@filePath,data.table=F)
+```
+
+```{r}
+covaFull <- dplyr::left_join(cova,map2,by=c('projid'))
+```
+
+```{r}
+geneticsFull <- dplyr::left_join(covaFull,genos,by=c('gwas_id'='ID'))
+```
+
+
+```{r}
+geneticsFull$apoe4 <- rep(0,nrow(geneticsFull))
+geneticsFull$apoe4[geneticsFull$apoe_genotype=='24'] <- 1
+geneticsFull$apoe4[geneticsFull$apoe_genotype=='34'] <- 1
+geneticsFull$apoe4[geneticsFull$apoe_genotype=='44'] <- 2
+```
+dlpfc
+
+uncensored ages
+```{r}
+uncensoredAgesObj <- synapseClient::synGet('syn7116000')
+uncensoredAges <- data.table::fread(uncensoredAgesObj@filePath,data.table=F)
+geneticsFull <- dplyr::left_join(geneticsFull,uncensoredAges,by='projid')
+geneticsFull$age_death <- geneticsFull$age_death.x
+geneticsFull$age_death[geneticsFull$age_death == '90+'] <- geneticsFull$age_death.y[geneticsFull$age_death=='90+']
+```
+
+individual effect p-values
+```{r}
+getModuleStats <- function(moduleName,
+                           outcome,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('rnaseq_id' = 'ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- 1 - modMatrix$msex
+  if(!apoe4){
+    str <- paste0(outcome,' ~ riskScore + female + female*riskScore')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','apoe4','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(eigengenes),paste0('pc',1:15))
+dlpfcRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFull,
+                                                   eigengenesList=eigengenes),
+                   SIMPLIFY=F)
+dlpfcRes <- do.call('rbind',dlpfcRes)
+dlpfcRes <- data.frame(dlpfcRes,stringsAsFactors = F)
+dlpfcResPval <- dplyr::filter(dlpfcRes,statistic=='p')
+dlpfcResPval <- dplyr::mutate(dlpfcResPval,adj.p=p.adjust(as.numeric(value),method='fdr'))
+
+dlpfcResApoe4 <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFull,
+                                                   eigengenesList=eigengenes,
+                                                   apoe4=TRUE),
+                   SIMPLIFY = F)
+dlpfcResApoe4 <- do.call('rbind',dlpfcResApoe4)
+#dlpfcResPval <- dplyr::filter(dlpfcResApoe4,statistic=='p')
+#dlpfcResPval <- dplyr::mutate(dlpfcResPval,adj.p=p.adjust(value,method='fdr'))
+```
+
+
+full model p-values
+```{r}
+getModuleStats <- function(moduleName,
+                           outcome,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('rnaseq_id' = 'ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- 1 - modMatrix$msex
+  if(!apoe4){
+    str <- paste0(outcome,' ~ riskScore + female + female*riskScore')
+    res <- summary(lm(str,data=modMatrix))$fstatistic
+    pval <- pf(res[1],res[2],res[3],lower.tail=F)
+    #colnames(res) <- c('estimate','se','t','p')
+    #rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res2 <- data.frame(module = moduleName,
+                       pc = outcome,
+                       p = pval,
+                       stringsAsFactors=F)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore ')
+    res <- summary(lm(str,data=modMatrix))$fstatistic
+    pval <- pf(res[1],res[2],res[3],lower.tail=F)
+    #colnames(res) <- c('estimate','se','t','p')
+    #rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res2 <- data.frame(module = moduleName,
+                       pc = outcome,
+                       p = pval,
+                       stringsAsFactors=F)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(eigengenes),paste0('pc',1:15),stringsAsFactors=F)
+dlpfcRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFull,
+                                                   eigengenesList=eigengenes),
+                   SIMPLIFY=F)
+dlpfcRes <- do.call('rbind',dlpfcRes)
+dlpfcResApoe4 <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFull,
+                                                   eigengenesList=eigengenes,
+                                                   apoe4=TRUE),
+                   SIMPLIFY = F)
+dlpfcResApoe4 <- do.call('rbind',dlpfcResApoe4)
+```
+
+
+ordinal regression of braak staging and cerad
+
+```{r}
+summary(MASS::polr(as.factor(braaksc) ~ riskScore + female + riskScore*female,geneticsFull))
+summary(MASS::polr(as.factor(ceradsc) ~ riskScore + female + riskScore*female,geneticsFull))
+geneticsFull$cogdxModified <- geneticsFull$cogdx
+geneticsFull$cogdx[geneticsFull$cogdx==3 | geneticsFull$cogdx==5 | geneticsFull$cogdx==6] <- NA
+geneticsFull$cogdxModified[geneticsFull$cogdxModified==4] <- 3
+summary(MASS::polr(as.factor(cogdxModified) ~ riskScore + female + riskScore*female,geneticsFull))
+
+summary(MASS::polr(as.factor(braaksc) ~ riskScore + female + riskScore*female + apoe4+ceradsc+as.numeric(age_death),modMatrix))
+
+```
+
+
+
+
+individual snp p-values
+```{r}
+getModuleStatsSnp <- function(moduleName,
+                           outcome,
+                           snp,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('rnaseq_id' = 'ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- 1 - modMatrix$msex
+  if(!apoe4){
+    str <- paste0(outcome,' ~ ',snp,' + female + female*',snp)
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept',snp,'female',paste0(snp,'*female'))
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore ')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','apoe4','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(eigengenes),
+                          paste0('pc',1:15),
+                          colnames(geneticsFull)[grep('^rs',colnames(geneticsFull))],
+                          stringsAsFactors=F)
+
+dlpfcResSnp <- mapply(getModuleStatsSnp,
+                   modelToRun$Var1,
+                   modelToRun$Var2,
+                   modelToRun$Var3,MoreArgs = list(geneticsFullDf=geneticsFull,
+                                                   eigengenesList=eigengenes),
+                   SIMPLIFY=F)
+dlpfcResSnp <- do.call('rbind',dlpfcResSnp)
+dlpfcResApoe4 <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFull,
+                                                   eigengenesList=eigengenes,
+                                                   apoe4=TRUE),
+                   SIMPLIFY = F)
+dlpfcResApoe4 <- do.call('rbind',dlpfcResApoe4)
+```
+
+
+cbe/tcx covariates & eigengenes
+```{r}
+cbe_cov_obj <- synapseClient::synGet('syn5223705')
+cbe_cov <- data.table::fread(cbe_cov_obj@filePath)
+
+tcx_cov_obj <- synapseClient::synGet('syn3817650')
+tcx_cov <- data.table::fread(tcx_cov_obj@filePath)
+
+tcx_eigengenes <- uwadrc::get_eigengenes_tissue(tissue='TCX')
+cbe_eigengenes <- uwadrc::get_eigengenes_tissue(tissue='CBE')
+
+```
+tcx
+```{r}
+genosTCX <- genos
+genosTCX$ID <- paste0(genosTCX$ID,'_TCX')
+geneticsFullTCX <- dplyr::left_join(tcx_cov,genosTCX,by=c('ID'='ID'))
+```
+
+
+```{r}
+geneticsFullTCX$apoe4 <- rep(0,nrow(geneticsFullTCX))
+geneticsFullTCX$apoe4[geneticsFullTCX$ApoE=='24'] <- 1
+geneticsFullTCX$apoe4[geneticsFullTCX$ApoE=='34'] <- 1
+geneticsFullTCX$apoe4[geneticsFullTCX$ApoE=='44'] <- 2
+```
+
+
+```{r}
+getModuleStats <- function(moduleName,
+                           outcome,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- as.numeric(modMatrix$Gender=='F')
+  if(!apoe4){
+    str <- paste0(outcome,' ~ riskScore + female + female*riskScore')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore ')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','apoe4','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(tcx_eigengenes),paste0('pc',1:15))
+tcxRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFullTCX,
+                                                   eigengenesList=tcx_eigengenes),
+                   SIMPLIFY=F)
+tcxRes <- do.call('rbind',tcxRes)
+tcxRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFullTCX,
+                                                   eigengenesList=tcx_eigengenes,
+                                                   apoe4=T),
+                   SIMPLIFY=F)
+tcxRes <- do.call('rbind',tcxRes)
+```
+
+
+full model p-values
+```{r}
+getModuleStats <- function(moduleName,
+                           outcome,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- as.numeric(modMatrix$Gender=='F')
+  if(!apoe4){
+    str <- paste0(outcome,' ~ riskScore + female + female*riskScore')
+    res <- summary(lm(str,data=modMatrix))$fstatistic
+    pval <- pf(res[1],res[2],res[3],lower.tail=F)
+    #colnames(res) <- c('estimate','se','t','p')
+    #rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res2 <- data.frame(module = moduleName,
+                       pc = outcome,
+                       p = pval,
+                       stringsAsFactors=F)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore ')
+    res <- summary(lm(str,data=modMatrix))$fstatistic
+    pval <- pf(res[1],res[2],res[3],lower.tail=F)
+    #colnames(res) <- c('estimate','se','t','p')
+    #rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res2 <- data.frame(module = moduleName,
+                       pc = outcome,
+                       p = pval,
+                       stringsAsFactors=F)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(tcx_eigengenes),paste0('pc',1:15))
+tcxRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFullTCX,
+                                                   eigengenesList=tcx_eigengenes),
+                   SIMPLIFY=F)
+tcxRes <- do.call('rbind',tcxRes)
+tcxRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFullTCX,
+                                                   eigengenesList=tcx_eigengenes,
+                                                   apoe4=T),
+                   SIMPLIFY=F)
+tcxRes <- do.call('rbind',tcxRes)
+```
+
+individual snp p-values
+```{r}
+getModuleStatsSnp <- function(moduleName,
+                           outcome,
+                           snp,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- as.numeric(modMatrix$Gender=='F')
+  if(!apoe4){
+    str <- paste0(outcome,' ~ ',snp,' + female + female*',snp)
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept',snp,'female',paste0(snp,'*female'))
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore ')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    #rownames(res) <- c('intercept','GRS','female','apoe4','GRS*female')
+    rownames(res) <- c('intercept',snp,'female','apoe4',paste0(snp,'*female'))
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(tcx_eigengenes),
+                          paste0('pc',1:5),
+                          colnames(geneticsFullTCX)[grep('^rs',colnames(geneticsFullTCX))],
+                          stringsAsFactors=F)
+
+dlpfcResSnp <- mapply(getModuleStatsSnp,
+                   modelToRun$Var1,
+                   modelToRun$Var2,
+                   modelToRun$Var3,MoreArgs = list(geneticsFullDf=geneticsFullTCX,
+                                                   eigengenesList=tcx_eigengenes),
+                   SIMPLIFY=F)
+dlpfcResSnp <- do.call('rbind',dlpfcResSnp)
+dlpfcResSnp <- mapply(getModuleStatsSnp,
+                   modelToRun$Var1,
+                   modelToRun$Var2,
+                   modelToRun$Var3,MoreArgs = list(geneticsFullDf=geneticsFullTCX,
+                                                   eigengenesList=tcx_eigengenes,
+                                                   apoe4=T),
+                   SIMPLIFY=F)
+dlpfcResSnp <- do.call('rbind',dlpfcResSnp)
+```
+
+
+
+
+cbe
+```{r}
+genosCBE <- genos
+genosCBE$ID <- paste0(genosCBE$ID,'_CER')
+geneticsFullCBE <- dplyr::left_join(cbe_cov,genosCBE,by=c('SampleID'='ID'))
+```
+
+
+```{r}
+geneticsFullCBE$apoe4 <- rep(0,nrow(geneticsFullCBE))
+geneticsFullCBE$apoe4[geneticsFullCBE$ApoE=='24'] <- 1
+geneticsFullCBE$apoe4[geneticsFullCBE$ApoE=='34'] <- 1
+geneticsFullCBE$apoe4[geneticsFullCBE$ApoE=='44'] <- 2
+```
+
+
+```{r}
+getModuleStats <- function(moduleName,
+                           outcome,
+                           geneticsFullDf,
+                           eigengenesList,
+                           apoe4=FALSE){
+  mod <- data.frame(eigengenesList[[moduleName]],
+                               stringsAsFactors=F)
+  mod$ID <- rownames(mod)
+  modMatrix <- dplyr::left_join(geneticsFullDf,
+                                mod,
+                                by = c('SampleID'='ID'))
+#pairs(modMatrix[,c('riskScore','pc1','pc2','pc3','pc4','pc5')])
+  modMatrix$female <- as.numeric(modMatrix$Sex=='F')
+  if(!apoe4){
+    str <- paste0(outcome,' ~ riskScore + female + female*riskScore')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }else{
+    str <- paste0(outcome,' ~ riskScore + female + apoe4 +female*riskScore ')
+    res <- summary(lm(str,data=modMatrix))$coef
+    colnames(res) <- c('estimate','se','t','p')
+    rownames(res) <- c('intercept','GRS','female','apoe4','GRS*female')
+    res <- data.frame(res,stringsAsFactors=F)
+    res$module <- moduleName
+    res$pc <- outcome
+    res$variableName <- rownames(res)
+    res2 <- tidyr::gather(res,key='statistic',value='value',1:4)
+  }
+  return(res2)
+}
+
+modelToRun <- expand.grid(names(cbe_eigengenes),paste0('pc',1:5))
+tcxRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFullCBE,
+                                                   eigengenesList=cbe_eigengenes),
+                   SIMPLIFY=F)
+tcxRes <- do.call('rbind',tcxRes)
+tcxRes <- mapply(getModuleStats,
+                   modelToRun$Var1,
+                   modelToRun$Var2,MoreArgs = list(geneticsFullDf=geneticsFullCBE,
+                                                   eigengenesList=cbe_eigengenes,
+                                                   apoe4=T),
+                   SIMPLIFY=F)
+tcxRes <- do.call('rbind',tcxRes)
+```
