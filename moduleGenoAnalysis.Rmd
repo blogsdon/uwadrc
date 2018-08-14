@@ -14,9 +14,10 @@ eigengenes <- uwadrc::get_eigengenes_tissue()
 
 
 ```{r}
-synapseClient::synapseLogin()
-covobj <- synapseClient::synGet('syn3191087')
-cova <- data.table::fread(covobj@filePath,data.table=F)
+#synapseClient::synapseLogin()
+synapser::synLogin()
+covobj <- synapser::synGet('syn3191087')
+cova <- data.table::fread(covobj$path,data.table=F)
 #cova <- cova[,-1]
 #colnames(cova)
 #cova <- dplyr::select(cova,projid,cogdx,braaksc,ceradsc,age_first_ad_dx,educ)
@@ -27,8 +28,9 @@ genos <- uwadrc::loadAMPADsnps()
 ```
 
 ```{r}
-mappingObj <- synapseClient::synGet('syn3382527')
-map2 <- data.table::fread(mappingObj@filePath,data.table=F)
+#mappingObj <- synapseClient::synGet('syn3382527')
+mappingObj <- synapser::synGet('syn3382527')
+map2 <- data.table::fread(mappingObj$path,data.table=F)
 ```
 
 ```{r}
@@ -50,8 +52,9 @@ dlpfc
 
 uncensored ages
 ```{r}
-uncensoredAgesObj <- synapseClient::synGet('syn7116000')
-uncensoredAges <- data.table::fread(uncensoredAgesObj@filePath,data.table=F)
+#uncensoredAgesObj <- synapseClient::synGet('syn7116000')
+uncensoredAgesObj <- synapser::synGet('syn7116000')
+uncensoredAges <- data.table::fread(uncensoredAgesObj$path,data.table=F)
 geneticsFull <- dplyr::left_join(geneticsFull,uncensoredAges,by='projid')
 geneticsFull$age_death <- geneticsFull$age_death.x
 geneticsFull$age_death[geneticsFull$age_death == '90+'] <- geneticsFull$age_death.y[geneticsFull$age_death=='90+']
@@ -64,7 +67,7 @@ getModuleStats <- function(moduleName,
                            geneticsFullDf,
                            eigengenesList,
                            apoe4=FALSE){
-  mod <- data.frame(eigengenesList[[moduleName]],
+  mod <- data.frame(eigengenesList[[moduleName]]$eigenGenes,
                                stringsAsFactors=F)
   mod$ID <- rownames(mod)
   modMatrix <- dplyr::left_join(geneticsFullDf,
@@ -117,6 +120,34 @@ dlpfcResApoe4 <- do.call('rbind',dlpfcResApoe4)
 #dlpfcResPval <- dplyr::filter(dlpfcResApoe4,statistic=='p')
 #dlpfcResPval <- dplyr::mutate(dlpfcResPval,adj.p=p.adjust(value,method='fdr'))
 ```
+
+
+
+plot of pc9 in brown
+```{r}
+modFrame <- data.frame(eigengenes[["aggregateDLPFCbrownDLPFC"]]$eigenGenes,
+                               stringsAsFactors=F)
+modFrame$ID <- rownames(modFrame)
+modMatrix <- dplyr::left_join(geneticsFull,
+                                modFrame,
+                                by = c('rnaseq_id' = 'ID'))
+
+modMatrix$female <- 1 - modMatrix$msex
+
+modMatrix <- dplyr::select(modMatrix,female,pc9,riskScore)
+modMatrix$female <- as.factor(modMatrix$female)
+g <- ggplot2::ggplot(data = modMatrix,
+                     ggplot2::aes(x = riskScore,
+                                  y = pc9))
+g <- g + ggplot2::geom_point()
+g <- g + ggplot2::facet_grid(. ~ female)
+g <- g + ggplot2::geom_point(shape=1)
+g <- g + ggplot2::geom_smooth(method=lm)
+g
+```
+
+
+
 
 
 full model p-values

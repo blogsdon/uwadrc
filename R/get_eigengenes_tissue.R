@@ -1,7 +1,10 @@
 get_eigengenes_tissue <- function(synId = 'syn11932957',tissue = 'DLPFC'){
   #aggMods <- rSynapseUtilities::loadFullTable(synId)
-  synapseClient::synapseLogin()
-  mods <- synapseClient::synTableQuery(paste0("select * from ",synId," where brainRegion = \'",tissue,'\''))@values
+  #synapseClient::synapseLogin()
+  synapser::synLogin()
+  #mods <- synapseClient::synTableQuery(paste0("select * from ",synId," where brainRegion = \'",tissue,'\''))@values
+  mods <- synapser::synTableQuery(paste0("select * from ",synId," where brainRegion = \'",tissue,'\''))$asDataFrame()
+  mods <- mods[,-c(1,2)]
   #library(AMPAD)
   #geneExpressionForAnalysis <- AMPAD::pullExpressionAndPhenoWinsorized()
   load('gexpr.rda')
